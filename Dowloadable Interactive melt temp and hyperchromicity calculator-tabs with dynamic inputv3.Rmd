@@ -1,0 +1,344 @@
+---
+title: 'Oligonucleotide Melting Temperature Calculator'
+author: 'Dan Feldheim'
+date: "September 13, 2017"
+output: slidy_presentation
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+install.packages('knitr')
+library('knitr')
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r results='asis'}
+install.packages('shiny')
+library(shiny)
+server <- function(input, output){
+      Filename <- reactive({
+        file1 <- input$file
+     if(is.null(file1)){return()}
+      read.csv(file1$datapath, header = input$header) # sep = input$sep)
+    })
+      
+      sample <- reactive({input$sampleName})
+      
+    output$absvtemp <- renderPlot({
+      lowtemp <<- as.numeric(input$Low_Temperature)
+      hightemp <<- as.numeric(input$High_Temperature)
+      Filename2 <<- subset(Filename(), temp > lowtemp & temp < hightemp)
+      
+  plot(Filename2$temp,Filename2$abs,
+     main = paste(sample(), "\n", "Absorbance vs. Temperature"),
+     col = "green",
+     pch = 20,
+     ylab = "Absorbance",
+     xlab = (expression(paste("Temperature (", degree, "C)"))))
+})
+
+# Duplicate the code for abs v temp plot under a different output name so it can be used in two different tab panels.  
+ output$absvtemp2 <- renderPlot({
+      lowtemp <<- as.numeric(input$Low_Temperature)
+      hightemp <<- as.numeric(input$High_Temperature)
+      Filename2 <<- subset(Filename(), temp > lowtemp & temp < hightemp)
+      
+  plot(Filename2$temp,Filename2$abs,
+     main = paste(sample(), "\n", "Absorbance vs. Temperature"),
+     col = "green",
+     pch = 20,
+     ylab = "Absorbance",
+     xlab = (expression(paste("Temperature (", degree, "C)"))))
+})
+    
+    
+# Calculate the absorbance vs. temp derivative plot and label peaks. 
+output$derivplot <- renderPlot({
+lowtemp <<- as.numeric(input$Low_Temperature)
+hightemp <<- as.numeric(input$High_Temperature)
+Filename2 <<- subset(Filename(), temp > lowtemp & temp < hightemp)
+deriv.prime <- diff(Filename2$abs)/diff(Filename2$temp)
+dX <- rowMeans(embed(Filename2$temp,2)) 
+mydata <- data.frame(temp = dX, slope = deriv.prime)
+cleanedmydata <- mydata[!(mydata$slope == "Inf" | mydata$slope == "-Inf"), ]  
+smoothingSpline = smooth.spline(cleanedmydata$temp, cleanedmydata$slope, spar = 0.5)  
+smoothedData <- data.frame(temp = smoothingSpline$x, slope = smoothingSpline$y) 
+
+plot(smoothedData$temp, smoothedData$slope,
+     main = paste(sample(), "\n","1st Derivative"),
+     col = "purple",
+     pch = 20,
+     ylab = "d(absorbance/d(temp)",
+     xlab = (expression(paste("Temperature (", degree, "C)"))))
+})
+
+# Duplicate the code for derivative plot under a different output name so it can be used in two different tab panels. 
+output$derivplot2 <- renderPlot({
+lowtemp <<- as.numeric(input$Low_Temperature)
+hightemp <<- as.numeric(input$High_Temperature)
+Filename2 <<- subset(Filename(), temp > lowtemp & temp < hightemp)
+deriv.prime <- diff(Filename2$abs)/diff(Filename2$temp)
+dX <- rowMeans(embed(Filename2$temp,2)) 
+mydata <- data.frame(temp = dX, slope = deriv.prime)
+cleanedmydata <- mydata[!(mydata$slope == "Inf" | mydata$slope == "-Inf"), ]  
+smoothingSpline = smooth.spline(cleanedmydata$temp, cleanedmydata$slope, spar = 0.5)  
+smoothedData <- data.frame(temp = smoothingSpline$x, slope = smoothingSpline$y) 
+
+plot(smoothedData$temp, smoothedData$slope,
+     main = paste(sample(), "\n","1st Derivative"),
+     col = "purple",
+     pch = 20,
+     ylab = "d(absorbance/d(temp)",
+     xlab = (expression(paste("Temperature (", degree, "C)"))))
+})
+
+
+# Calculation of hyperchromicity based upon upper and lower temps chosen by user.
+output$hyperdf <- renderTable({  
+initialtemp <<- as.numeric(input$Low_hyperTemperature)
+finaltemp <<- as.numeric(input$High_hyperTemperature)
+Filename3 <- subset(Filename(), temp > initialtemp & temp < finaltemp)
+lowerpoint <- Filename3[1, 2]
+upperpoint <- tail(Filename3$abs, n = 1)
+hyperchrome.manual <- ((upperpoint - lowerpoint)/lowerpoint)*100
+hyperchromicity.manual <<- as.numeric(round(hyperchrome.manual,1))
+
+# Calculation of hyperchromicity using a baseline correction.
+# Declare inputs
+lowbaseT1 <- input$lowbaseT1
+lowbaseT2 <- input$lowbaseT2
+highbaseT1 <- input$highbaseT1
+highbaseT2 <- input$highbaseT2
+lowersteptemp <- input$lowersteptemp
+uppersteptemp <- input$uppersteptemp
+
+# Subset data.
+temp.sub <- subset(Filename(), temp > lowbaseT1 & temp < highbaseT2)
+lowbase.sub <- subset(temp.sub, temp > lowbaseT1 & temp < lowbaseT2)
+highbase.sub <- subset(temp.sub, temp > highbaseT1 & temp < highbaseT2)
+
+# Linear regression of upper and lower baselines, and step to find slope and Y int.
+highabs <- lm(highbase.sub$abs ~ highbase.sub$temp)
+coef(highabs)
+highY <- coef(highabs)[1]
+highbase.slope <- coef(highabs)[2]
+
+lowabs <- lm(lowbase.sub$abs ~ lowbase.sub$temp)
+coef(lowabs)
+lowY <- coef(lowabs)[1]
+lowbase.slope <- coef(lowabs)[2]
+
+temp.sub$ylowbase <- (lowbase.slope*temp.sub$temp) + lowY
+temp.sub$yhighbase <- (highbase.slope*temp.sub$temp) + highY
+stepPts <- subset(temp.sub, temp > lowersteptemp & temp < uppersteptemp)
+
+stepReg <- lm(stepPts$abs ~ stepPts$temp)
+stepRegY <- coef(stepReg)[1]
+stepReg.slope <- coef(stepReg)[2]
+temp.sub$stepAbs <- (stepReg.slope*temp.sub$temp) + stepRegY
+
+# Calculate absorbances at the intersections of the step and upper and lower baseline regression.
+intersect.low <- ((stepReg.slope*lowY)-(lowbase.slope*stepRegY))/(stepReg.slope-lowbase.slope)
+intersect.high <- ((stepReg.slope*highY)-(highbase.slope*stepRegY))/(stepReg.slope-highbase.slope)
+
+# Calculate hyperchromicity
+hyperchrome.auto <- ((intersect.high - intersect.low)/intersect.low)*100
+hyperchromicity.auto <- as.numeric(round(hyperchrome.auto,1))
+
+# Calculation of Tm
+lowtemp <- as.numeric(input$Low_Temperature)
+hightemp <- as.numeric(input$High_Temperature)
+Filename4 <- subset(Filename(), temp > lowtemp & temp < hightemp)
+deriv.prime <- diff(Filename4$abs)/diff(Filename4$temp)
+dX <- rowMeans(embed(Filename4$temp,2)) 
+mydata <- data.frame(temp = dX, slope = deriv.prime)
+cleanedmydata <- mydata[!(mydata$slope == "Inf" | mydata$slope == "-Inf"), ]  
+smoothingSpline = smooth.spline(cleanedmydata$temp, cleanedmydata$slope, spar = 0.5)  
+smoothedData <- data.frame(temp = smoothingSpline$x, slope = smoothingSpline$y)
+yMax <- max(smoothedData$slope) 
+ymaxPoint <- subset(smoothedData, slope == yMax)  
+Tm <<- as.numeric(round(ymaxPoint[1,1], 2)) 
+
+# Create dataframe for summary data table
+# hyperdf <- data.frame("Manual Hyperchromicity" = hyperchromicity.manual, "Baseline Corrected Hyperchromicity" = hyperchromicity.auto, "Tm" = Tm)
+hyperdf <- data.frame("Tm" = Tm, "Manual Hyperchromicity" = hyperchromicity.manual, "Corrected Hyperchromicity" = hyperchromicity.auto)
+})
+
+
+# Duplicate the code for data table under a different output name so it can be used in two different tab panels. 
+output$hyperdf2 <- renderTable({
+initialtemp <<- as.numeric(input$Low_hyperTemperature)
+finaltemp <<- as.numeric(input$High_hyperTemperature)
+Filename3 <- subset(Filename(), temp > initialtemp & temp < finaltemp)
+lowerpoint <- Filename3[1, 2]
+upperpoint <- tail(Filename3$abs, n = 1)
+hyperchrome.manual <- ((upperpoint - lowerpoint)/lowerpoint)*100
+hyperchromicity.manual <<- as.numeric(round(hyperchrome.manual,1))
+
+# Calculation of hyperchromicity using a baseline correction.
+# Declare inputs
+lowbaseT1 <- input$lowbaseT1
+lowbaseT2 <- input$lowbaseT2
+highbaseT1 <- input$highbaseT1
+highbaseT2 <- input$highbaseT2
+lowersteptemp <- input$lowersteptemp
+uppersteptemp <- input$uppersteptemp
+
+# Subset data.
+temp.sub <- subset(Filename(), temp > lowbaseT1 & temp < highbaseT2)
+lowbase.sub <- subset(temp.sub, temp > lowbaseT1 & temp < lowbaseT2)
+highbase.sub <- subset(temp.sub, temp > highbaseT1 & temp < highbaseT2)
+
+# Linear regression of upper and lower baselines, and step to find slope and Y int.
+highabs <- lm(highbase.sub$abs ~ highbase.sub$temp)
+coef(highabs)
+highY <- coef(highabs)[1]
+highbase.slope <- coef(highabs)[2]
+
+lowabs <- lm(lowbase.sub$abs ~ lowbase.sub$temp)
+coef(lowabs)
+lowY <- coef(lowabs)[1]
+lowbase.slope <- coef(lowabs)[2]
+
+temp.sub$ylowbase <- (lowbase.slope*temp.sub$temp) + lowY
+temp.sub$yhighbase <- (highbase.slope*temp.sub$temp) + highY
+stepPts <- subset(temp.sub, temp > lowersteptemp & temp < uppersteptemp)
+
+stepReg <- lm(stepPts$abs ~ stepPts$temp)
+stepRegY <- coef(stepReg)[1]
+stepReg.slope <- coef(stepReg)[2]
+temp.sub$stepAbs <- (stepReg.slope*temp.sub$temp) + stepRegY
+
+# Calculate absorbances at the intersections of the step and upper and lower baseline regression.
+intersect.low <- ((stepReg.slope*lowY)-(lowbase.slope*stepRegY))/(stepReg.slope-lowbase.slope)
+intersect.high <- ((stepReg.slope*highY)-(highbase.slope*stepRegY))/(stepReg.slope-highbase.slope)
+
+# Calculate hyperchromicity
+hyperchrome.auto <- ((intersect.high - intersect.low)/intersect.low)*100
+hyperchromicity.auto <- as.numeric(round(hyperchrome.auto,1))
+
+# Calculation of Tm
+lowtemp <- as.numeric(input$Low_Temperature)
+hightemp <- as.numeric(input$High_Temperature)
+Filename4 <- subset(Filename(), temp > lowtemp & temp < hightemp)
+deriv.prime <- diff(Filename4$abs)/diff(Filename4$temp)
+dX <- rowMeans(embed(Filename4$temp,2)) 
+mydata <- data.frame(temp = dX, slope = deriv.prime)
+cleanedmydata <- mydata[!(mydata$slope == "Inf" | mydata$slope == "-Inf"), ]  
+smoothingSpline = smooth.spline(cleanedmydata$temp, cleanedmydata$slope, spar = 0.5)  
+smoothedData <- data.frame(temp = smoothingSpline$x, slope = smoothingSpline$y)
+yMax <- max(smoothedData$slope) 
+ymaxPoint <- subset(smoothedData, slope == yMax)  
+Tm <<- as.numeric(round(ymaxPoint[1,1], 2)) 
+
+# Calculation of area under the curve based upon low and high temps entered.
+AUC.initialtemp <<- as.numeric(input$Low_Temperature)
+AUC.finaltemp <<- as.numeric(input$High_Temperature)
+Filename.AUC <- subset(Filename(), temp > AUC.initialtemp & temp < AUC.finaltemp)
+# Normalize the curve
+Filename.AUC$normalized = (Filename.AUC$abs-min(Filename.AUC$abs))/(max(Filename.AUC$abs)-min(Filename.AUC$abs))
+# Calculate area under the curve
+require(pracma)
+AUC <- as.numeric(round(trapz(Filename.AUC$temp, Filename.AUC$normalized), 1))
+
+# Create dataframe for summary data table
+# hyperdf <- data.frame("Manual Hyperchromicity" = hyperchromicity.manual, "Baseline Corrected Hyperchromicity" = hyperchromicity.auto, "Tm" = Tm)
+hyperdf2 <- data.frame("Tm" = Tm, "Manual Hyperchromicity" = hyperchromicity.manual, "Corrected Hyperchromicity" = hyperchromicity.auto, "AUC" = AUC)
+})
+
+}
+
+ui <- fluidPage(
+  tabsetPanel(
+  tabPanel(title = "Abs v. Temp", 
+  sidebarLayout(
+  sidebarPanel(
+      fileInput("file", "Choose CSV File", accept=c('text/csv','text/comma-separated-values,text/plain','.csv')),
+      helpText("Max file size is 5MB"),
+      tags$hr(),
+      h5(helpText("Select the desired parameters below")),
+      checkboxInput(inputId = 'header', label = 'Header', value = TRUE),
+  # radioButtons(inputId = 'sep', label = "Separator", choices = c(comma = ",", semicolon = ";"), selected = ","),
+    textInput("sampleName", "Enter Sample ID", "")
+  ),
+  
+  mainPanel(
+  fluidRow(
+    column(6, textInput("Low_Temperature", label = "Input Low Temperature for Plot",
+                value = 25)),
+    column(6, textInput("High_Temperature", label = "Input High Temperature for Plot",
+                value = 75))
+           ),
+          
+  fluidRow(
+    column(12, plotOutput("absvtemp"))
+           )
+  )
+  )
+  ),
+  
+  tabPanel(title = "d(Abs)/d(temp)",
+  column(8, plotOutput("derivplot"))
+  ),
+    
+  tabPanel(title = "Tm and Hyperchromicity", 
+    fluidRow(
+      column(4, offset = 2, align = "c", tableOutput("hyperdf"))
+            ),
+    
+    fluidRow(
+    column(4, textInput("lowbaseT1", label = "Input Lower Baseline Temperature T1 for Lower Baseline Correction", 
+              value = 30)),
+    column(6, textInput("lowbaseT2", label = "Input Lower Baseline Temperature T2 for Lower Baseline Correction",
+              value = 40))
+           ),
+
+    fluidRow(
+    column(4, textInput("highbaseT1", label = "Input Upper Baseline Temperature T1 for Upper Baseline Correction",
+              value = 65)),
+    column(6, textInput("highbaseT2", label = "Input Upper Baseline Temperature T2 for Upper Baseline Correction",
+              value = 75))
+           ),
+    
+    fluidRow(
+    column(4, textInput("lowersteptemp", label = "Input Lower Step Temperature T1 for Step Correction",
+              value = 30)),
+    column(6, textInput("uppersteptemp", label = "Input Upper Step Temperature T2 for Step Correction",
+              value = 50))
+          ),
+           
+    fluidRow(
+    column(4, textInput("Low_hyperTemperature", label = "Input Low Temperature for Manual Hyperchromicity Calculation",
+                value = 25)),
+    column(7, textInput("High_hyperTemperature", label = "Input High Temperature for Manual Hyperchromicity Calculation",
+                value = 75))
+            )
+          ),
+
+  tabPanel(title = "Downloadable Data Summary",
+   fluidRow(
+    column(6, plotOutput("absvtemp2")),
+    column(6, plotOutput("derivplot2"))
+           ),
+    
+   fluidRow(
+     column(6, offset = 3, align = "c", tableOutput("hyperdf2"))
+          ),
+   downloadButton('Click to export PDF')
+          )
+      )
+      )
+
+
+
+shinyApp(ui = ui, server = server)
+```
+
+
+
+
+
+
+
+
+
