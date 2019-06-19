@@ -7,13 +7,13 @@ runtime: shiny
 ---
 
 ```{r setup, include=FALSE}
-install.packages('knitr')
+# install.packages('knitr')
 library('knitr')
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ```{r results='asis'}
-install.packages('shiny')
+# install.packages('shiny')
 library(shiny)
 server <- function(input, output){
       Filename <- reactive({
@@ -238,6 +238,7 @@ Filename.AUC <- subset(Filename(), temp > AUC.initialtemp & temp < AUC.finaltemp
 # Normalize the curve
 Filename.AUC$normalized = (Filename.AUC$abs-min(Filename.AUC$abs))/(max(Filename.AUC$abs)-min(Filename.AUC$abs))
 # Calculate area under the curve
+# install.packages('pracma')
 require(pracma)
 AUC <- as.numeric(round(trapz(Filename.AUC$temp, Filename.AUC$normalized), 1))
 
@@ -315,19 +316,18 @@ ui <- fluidPage(
             )
           ),
 
-  tabPanel(title = "Downloadable Data Summary",
+  tabPanel(title = "Data Summary",
    fluidRow(
     column(6, plotOutput("absvtemp2")),
     column(6, plotOutput("derivplot2"))
-           ),
+     ),
     
    fluidRow(
      column(6, offset = 3, align = "c", tableOutput("hyperdf2"))
-          ),
-   downloadButton('Click to export PDF')
           )
-      )
-      )
+  )
+  )
+)
 
 
 
